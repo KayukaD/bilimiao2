@@ -79,6 +79,8 @@ import cn.a10miaomiao.bilimiao.compose.common.isCompactWindow
 import cn.a10miaomiao.bilimiao.compose.common.ContentInsets
 import cn.a10miaomiao.bilimiao.compose.common.toContentInsets
 import cn.a10miaomiao.bilimiao.compose.components.appbar.AppBar
+import cn.a10miaomiao.bilimiao.compose.components.glass.glassAmbientBlobs
+import cn.a10miaomiao.bilimiao.compose.components.glass.glassBackdropSource
 import cn.a10miaomiao.bilimiao.compose.components.appbar.AppBarConfig
 import cn.a10miaomiao.bilimiao.compose.components.appbar.AppBarHorizontal
 import cn.a10miaomiao.bilimiao.compose.components.appbar.AppBarOrientation
@@ -174,10 +176,9 @@ fun ComposeScaffold(
         } else {
             val collapseRangePx = with(density) { AppBarConfig.MenuHeight.toPx() }
             object : NestedScrollConnection {
-                // 横屏 AppBar 是侧边栏，不参与滚动收缩
+                // 大屏的侧边 Rail 也参与滚动收缩，和底部 Dock 的行为保持一致
                 private val enabled: Boolean
-                    get() = appBarState.visible &&
-                        appBarState.orientation == AppBarOrientation.Vertical
+                    get() = appBarState.visible
 
                 override fun onPostScroll(
                     consumed: androidx.compose.ui.geometry.Offset,
@@ -415,6 +416,7 @@ fun ComposeScaffold(
                     ) {
                         Box(
                             modifier = Modifier
+                                .glassBackdropSource()
                                 .fillMaxSize()
                                 .then(
                                     if (appBarNestedScrollConnection != null) {
@@ -424,6 +426,7 @@ fun ComposeScaffold(
                                     }
                                 )
                                 .background(MaterialTheme.colorScheme.background)
+                                .glassAmbientBlobs(topBlobs = false)
                         ) {
                             content()
                         }
