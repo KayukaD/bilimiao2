@@ -1,65 +1,72 @@
 package cn.a10miaomiao.bilimiao.compose.components.appbar
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.Tune
+import cn.a10miaomiao.bilimiao.compose.components.glass.glassAppBarSurface
 
 /**
- * AppBar 组件
- * 支持竖屏和横屏两种布局
+ * 竖屏底栏，分两层：
  *
- * 竖屏布局为「标题条 + 菜单行」的底栏，页面滚动时按 [AppBarState.collapseProgress] 整体下滑，
- * 收起后只保留标题条（参照老项目 bbmiao 的 quick-return 行为）。
+ * - 导航层（常驻，54dp）：返回 / 抽屉、当前页导航项或标题、展开开关
+ * - 操作层（可展开，46dp）：页面下发的菜单、指针 / 交换等工具
  *
- * @param title 标题
- * @param canBack 是否显示返回按钮
- * @param showPointer 是否显示指针图标
- * @param pointerOrientation 指针方向
- * @param showExchange 是否显示交换图标（横屏）
- * @param menus 菜单列表
- * @param isNavigationMenu 是否为导航菜单模式
- * @param checkedKey 当前选中的菜单项key
- * @param onBackClick 返回按钮点击
- * @param onMenuClick 菜单按钮点击
- * @param onMenuItemClick 菜单项点击
- * @param onPointerClick 指针点击
- * @param onExchangeClick 交换按钮点击
- * @param modifier 修饰符
+ * 两层各自是一块玻璃，中间留 6dp 缝，滚动时整条 Dock 一起下沉，
+ * 只留顶部一条玻璃边在屏幕底部；上滑或点标题即恢复。
  */
 @Composable
 fun AppBar(
@@ -79,85 +86,186 @@ fun AppBar(
     onExchangeClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val safePadding = WindowInsets.safeDrawing.only(
-        WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+    val horizontalSafe = WindowInsets.safeDrawing.only(
+        WindowInsetsSides.Horizontal
     ).asPaddingValues()
-    val collapseRangePx = with(LocalDensity.current) { AppBarConfig.MenuHeight.toPx() }
+    val bottomSafe = WindowInsets.safeDrawing.only(
+        WindowInsetsSides.Bottom
+    ).asPaddingValues().calculateBottomPadding()
     val interactionSource = remember { MutableInteractionSource() }
-    val surfaceColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)
+    val dark = isSystemInDarkTheme()
+    val glassTint = if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.30f)
+    val buttonTint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
 
-    // 整条 Surface 下滑一个菜单行高度：菜单行滑出可视区，标题条停在底部安全区上方，
-    // 上方腾出的空间露出下面的内容；滑出窗口底部的部分靠 clipToBounds 裁掉。
-    // 收缩进度在绘制阶段读取，滚动过程中不触发重组
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clipToBounds(),
-    ) {
-        Surface(
-            color = surfaceColor,
-            contentColor = MaterialTheme.colorScheme.onSurface,
+    // 导航模式下 menus 已经画在导航层，托盘里不再重复一遍
+    val trayMenus = if (isNavigationMenu) emptyList() else menus
+    val hasTray = trayMenus.isNotEmpty() || showPointer || showExchange
+    var trayExpanded by remember { mutableStateOf(false) }
+    // 换页后菜单内容会变，托盘收回去，避免停在上一个页面的菜单上
+    LaunchedEffect(menus, isNavigationMenu) { trayExpanded = false }
+    // 首次进入或切页时把 Dock 展开，避免延续上一个页面的收起态
+    LaunchedEffect(title, menus) { appBarState.expandAppBar() }
+    val trayArrow by animateFloatAsState(
+        targetValue = if (trayExpanded) 180f else 0f,
+        label = "trayArrow",
+    )
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
                 .graphicsLayer {
-                    translationY = collapseRangePx * appBarState.collapseProgress
+                    // 滚动收起：下沉的同时淡出，避免停在「图标被裁一半」的中间态
+                    val p = appBarState.collapseProgress
+                    // 完全移出屏幕：只靠 alpha 隐藏的话，透明 Dock 仍会吃掉点击
+                    translationY = 120.dp.toPx() * p
+                    alpha = 1f - p
                 },
+            verticalArrangement = Arrangement.Bottom,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                modifier = Modifier.padding(safePadding)
+            AnimatedVisibility(
+                visible = trayExpanded && hasTray,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
             ) {
-                // 标题区域（收起后标题条变成唯一的可点击入口，点击重新展开菜单行）
-                AppBarTitle(
-                    title = title,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(AppBarConfig.TitleHeight)
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                        ) {
-                            // 展开态下是空操作，收起态下动画展开
-                            appBarState.expandAppBar()
+                        .widthIn(max = 520.dp)
+                        .height(AppBarConfig.TrayHeight)
+                        .glassAppBarSurface(
+                            tint = glassTint,
+                            highlightColor = Color.White,
+                            blurRadius = 14.dp,
+                            cornerRadius = 24.dp,
+                            shadowElevation = 3.dp,
+                        ),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showPointer) {
+                            GlassIconButton(
+                                icon = Icons.Default.Tune,
+                                contentDescription = "指针",
+                                buttonTint = buttonTint,
+                                rotation = if (pointerOrientation) 0f else 180f,
+                                onClick = onPointerClick,
+                            )
                         }
-                )
-
-                // 菜单区域
-                AppBarMenuRow(
-                    canBack = canBack,
-                    showPointer = showPointer,
-                    pointerOrientation = pointerOrientation,
-                    showExchange = showExchange,
-                    menus = menus,
-                    isNavigationMenu = isNavigationMenu,
-                    checkedKey = checkedKey,
-                    appBarState = appBarState,
-                    onBackClick = onBackClick,
-                    onMenuClick = onMenuClick,
-                    onMenuItemClick = onMenuItemClick,
-                    onPointerClick = onPointerClick,
-                    onExchangeClick = onExchangeClick,
-                )
+                        if (showExchange) {
+                            GlassIconButton(
+                                icon = Icons.Default.SwapVert,
+                                contentDescription = "交换",
+                                buttonTint = buttonTint,
+                                onClick = onExchangeClick,
+                            )
+                        }
+                        if (trayMenus.isNotEmpty()) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                VerticalAppBarMenus(
+                                    menus = trayMenus,
+                                    isNavigationMenu = isNavigationMenu,
+                                    checkedKey = checkedKey,
+                                    appBarState = appBarState,
+                                    onMenuItemClick = onMenuItemClick,
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .height(AppBarConfig.DockHeight)
+                    .glassAppBarSurface(
+                        tint = glassTint,
+                        highlightColor = Color.White,
+                        blurRadius = 18.dp,
+                        cornerRadius = 30.dp,
+                        shadowElevation = 6.dp,
+                    ),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 6.dp)
+                        .padding(horizontalSafe),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    NavigationIcon(
+                        icon = if (canBack) AppBarNavigationIcon.Back else AppBarNavigationIcon.Menu,
+                        onClick = if (canBack) onBackClick else onMenuClick,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(buttonTint),
+                    )
+
+                    if (isNavigationMenu) {
+                        LazyRow(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            items(items = menus, key = { it.key }) { menuItem ->
+                                AppBarNavigationItem(
+                                    data = menuItem,
+                                    checked = checkedKey == menuItem.key,
+                                    onClick = onMenuItemClick,
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+                    } else {
+                        AppBarTitle(
+                            title = title,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null,
+                                ) { appBarState.expandAppBar() },
+                        )
+                    }
+
+                    if (hasTray) {
+                        GlassIconButton(
+                            icon = if (trayExpanded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                            contentDescription = if (trayExpanded) "收起菜单" else "展开菜单",
+                            buttonTint = buttonTint,
+                            rotation = 0f,
+                            onClick = { trayExpanded = !trayExpanded },
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(bottomSafe + 10.dp))
         }
     }
 }
 
-/**
- * AppBar 标题
- */
+/** 标题，单行省略；点击恢复到展开态。 */
 @Composable
 private fun AppBarTitle(
     title: String?,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center,
-    ) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
         if (!title.isNullOrEmpty()) {
             Text(
                 text = title.replace("\n", " "),
-                color = LocalContentColor.current.copy(alpha = 0.45f),
+                color = LocalContentColor.current.copy(alpha = 0.78f),
                 fontSize = AppBarConfig.TitleTextSize.value.sp,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -167,105 +275,35 @@ private fun AppBarTitle(
     }
 }
 
-/**
- * AppBar 菜单行
- *
- * 透明度随收缩进度在绘制阶段淡出，滚动时不参与重组
- */
+/** 圆形工具按钮。 */
 @Composable
-private fun AppBarMenuRow(
-    canBack: Boolean,
-    showPointer: Boolean,
-    pointerOrientation: Boolean,
-    showExchange: Boolean,
-    menus: List<MenuItemData>,
-    isNavigationMenu: Boolean,
-    checkedKey: Int?,
-    appBarState: AppBarState,
-    onBackClick: () -> Unit,
-    onMenuClick: () -> Unit,
-    onMenuItemClick: (MenuItemData) -> Unit,
-    onPointerClick: () -> Unit,
-    onExchangeClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(AppBarConfig.MenuHeight)
-            .padding(start = AppBarConfig.NavigationPadding)
-            .graphicsLayer { alpha = 1f - appBarState.collapseProgress },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        NavigationIcon(
-            icon = if (canBack) AppBarNavigationIcon.Back else AppBarNavigationIcon.Menu,
-            onClick = if (canBack) onBackClick else onMenuClick,
-        )
-
-        if (showPointer) {
-            AppBarIconButton(
-                icon = Icons.Default.Tune,
-                contentDescription = "指针",
-                rotation = if (pointerOrientation) 0f else 180f,
-                onClick = onPointerClick,
-            )
-        }
-
-        if (showExchange) {
-            AppBarIconButton(
-                icon = Icons.Default.SwapVert,
-                contentDescription = "交换",
-                onClick = onExchangeClick,
-            )
-        }
-
-        if (isNavigationMenu) {
-            LazyRow(
-                modifier = Modifier
-                    .weight(1f),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                items(
-                    items = menus,
-                    key = { it.key },
-                ) { menuItem ->
-                    AppBarNavigationItem(
-                        data = menuItem,
-                        checked = checkedKey == menuItem.key,
-                        onClick = onMenuItemClick,
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-            }
-        } else {
-            VerticalAppBarMenus(
-                menus = menus,
-                isNavigationMenu = isNavigationMenu,
-                checkedKey = checkedKey,
-                appBarState = appBarState,
-                onMenuItemClick = onMenuItemClick,
-            )
-        }
-    }
-}
-
-@Composable
-private fun AppBarIconButton(
+private fun GlassIconButton(
     icon: ImageVector,
     contentDescription: String,
+    buttonTint: Color,
     rotation: Float = 0f,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    Icon(
-        imageVector = icon,
-        contentDescription = contentDescription,
-        tint = LocalContentColor.current.copy(alpha = 0.45f),
+    Box(
         modifier = Modifier
-            .rotate(rotation)
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(buttonTint)
             .clickable(
                 interactionSource = interactionSource,
                 indication = ripple(bounded = false),
                 onClick = onClick,
             ),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = LocalContentColor.current.copy(alpha = 0.72f),
+            modifier = Modifier
+                .size(20.dp)
+                .rotate(rotation),
+        )
+    }
 }
